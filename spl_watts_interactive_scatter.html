@@ -1,0 +1,197 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive SPL Watts Calculator</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .controls { margin-bottom: 20px; }
+        .control-group { margin-right: 20px; display: inline-block; }
+        label { margin-right: 5px; }
+        #plot { width: 800px; height: 600px; }
+    </style>
+</head>
+<body>
+    <h1>Watts Required for Target SPL</h1>
+    <div class="controls">
+        <div class="control-group">
+            <label for="amp-watts">Amp Watts:</label>
+            <select id="amp-watts"></select>
+        </div>
+        <div class="control-group">
+            <label for="peak-level">Peak Listening Level dB:</label>
+            <select id="peak-level"></select>
+        </div>
+        <div class="control-group">
+            <label for="room-eq">Room EQ Headroom dB:</label>
+            <select id="room-eq"></select>
+        </div>
+        <div class="control-group">
+            <label for="distance">Listening Distance dB:</label>
+            <select id="distance"></select>
+        </div>
+    </div>
+    <div id="target-db-display">Target dB: <span id="target-db-value">N/A</span></div>
+    <div id="plot"></div>
+
+    <script>
+        // Populate dropdowns
+        const ampWattsSelect = document.getElementById('amp-watts');
+        const peakLevelSelect = document.getElementById('peak-level');
+        const roomEqSelect = document.getElementById('room-eq');
+        const distanceSelect = document.getElementById('distance');
+
+        // Amp Watts: 80 to 150, even only
+        for (let i = 80; i <= 150; i += 2) {
+            let option = document.createElement('option');
+            option.value = i;
+            option.text = i;
+            ampWattsSelect.appendChild(option);
+        }
+
+        // Peak Listening Level dB: -30 to 0
+        for (let i = -30; i <= 0; i++) {
+            let option = document.createElement('option');
+            option.value = i;
+            option.text = i;
+            peakLevelSelect.appendChild(option);
+        }
+
+        // Room EQ Headroom dB: 0 to 10
+        for (let i = 0; i <= 10; i++) {
+            let option = document.createElement('option');
+            option.value = i;
+            option.text = i;
+            roomEqSelect.appendChild(option);
+        }
+
+        // Listening Distance dB: 0 to 20
+        for (let i = 0; i <= 20; i++) {
+            let option = document.createElement('option');
+            option.value = i;
+            option.text = i;
+            distanceSelect.appendChild(option);
+        }
+
+        // Function to calculate and update scatter plot
+        function updatePlot() {
+            const ampWatts = parseFloat(ampWattsSelect.value);
+            const peakLevel = parseFloat(peakLevelSelect.value);
+            const roomEq = parseFloat(roomEqSelect.value);
+            const distance = parseFloat(distanceSelect.value);
+
+            // Calculate Target dB: 105 + (Peak Level + Room EQ + Distance)
+            const targetDb = 105 + (peakLevel + roomEq + distance);
+            document.getElementById('target-db-value').textContent = targetDb.toFixed(1);
+
+            // Define ranges
+            const sensitivity = Array.from({length: 8}, (_, i) => 84 + i * 2); // 84 to 98, even
+            const targetDbRange = Array.from({length: 41}, (_, i) => 84 + i); // 84 to 124
+            let scatterData = [];
+
+            // Calculate watts required and colors
+            for (let i = 0; i < targetDbRange.length; i++) {
+                for (let j = 0; j < sensitivity.length; j++) {
+                    const wattsForSPL = Math.pow(10, (targetDbRange[i] - sensitivity[j]) / 10);
+                    const isSPLValid = targetDbRange[i] >= targetDb;
+                    const isWattsValid = wattsForSPL < ampWatts;
+                    const color = isSPLValid && isWattsValid ? 'rgb(0, 255, 0)' : 'rgb(200, 200, 200)';
+                    scatterData.push({
+                        x: [sensitivity[j]],
+                        y: [targetDbRange[i]],
+                        mode: 'markers',
+                        marker: {
+                            size: 8,
+                            color: color,
+                            opacity: isSPLValid && isWattsValid ? 1 : 0.5
+                        },
+                        text: [`Watts: ${wattsForSPL.toFixed(2)}`],
+                        type: 'scatter',
+                        showlegend: false
+                    });
+                }
+            }
+
+            // Create scatter plot
+            const data = scatterData;
+
+            const layout = {
+                title: 'Watts Status for Target SPL',
+                xaxis: { title: 'Speaker Sensitivity (dB @ 1W)' },
+                yaxis: { title: 'Target SPL (dB)' },
+                width: 800,
+                height: 600,
+                margin: { l: 50, r: 50, b: 50, t: 50 },
+                showlegend: false,
+                hovermode: 'closest',
+                shapes: [
+                    {
+                        type: 'line',
+                        x0: sensitivity[0],
+                        x1: sensitivity[sensitivity.length - 1],
+                        y0: targetDb,
+                        y1: targetDb,
+                        line: {
+                            color: 'rgb(0, 0, 255)',
+                            width: 2,
+                            dash: 'dash'
+                        }
+                    }
+                ]
+            };
+
+            Plotly.newPlot('plot', data, layout);
+        }
+
+        // Event listeners for dropdowns
+        ampWattsSelect.addEventListener('change', updatePlot);
+        peakLevelSelect.addEventListener('change', updatePlot);
+        roomEqSelect.addEventListener('change', updatePlot);
+        distanceSelect.addEventListener('change', updatePlot);
+
+        // Initial plot
+        updatePlot();
+    </script>
+</body>
+</html>
